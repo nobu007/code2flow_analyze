@@ -1,8 +1,17 @@
 import json
 import subprocess
 
-from .model import (Group, Node, Call, Variable, BaseLanguage,
-                    OWNER_CONST, GROUP_TYPE, is_installed, flatten)
+from .model import (
+    GROUP_TYPE,
+    OWNER_CONST,
+    BaseLanguage,
+    Call,
+    Group,
+    Node,
+    Variable,
+    flatten,
+    is_installed,
+)
 
 
 def resolve_owner(owner_el):
@@ -16,21 +25,21 @@ def resolve_owner(owner_el):
     """
     if not owner_el or not isinstance(owner_el, list):
         return None
-    if owner_el[0] == 'begin':
+    if owner_el[0] == "begin":
         # skip complex ownership
         return OWNER_CONST.UNKNOWN_VAR
-    if owner_el[0] == 'send':
+    if owner_el[0] == "send":
         # sends are complex too
         return OWNER_CONST.UNKNOWN_VAR
-    if owner_el[0] == 'lvar':
+    if owner_el[0] == "lvar":
         # var.func()
         return owner_el[1]
-    if owner_el[0] == 'ivar':
+    if owner_el[0] == "ivar":
         # @var.func()
         return owner_el[1]
-    if owner_el[0] == 'self':
-        return 'self'
-    if owner_el[0] == 'const':
+    if owner_el[0] == "self":
+        return "self"
+    if owner_el[0] == "const":
         return owner_el[2]
 
     return OWNER_CONST.UNKNOWN_VAR
@@ -48,11 +57,10 @@ def get_call_from_send_el(func_el):
     owner_el = func_el[1]
     token = func_el[2]
     owner = resolve_owner(owner_el)
-    if owner and token == 'new':
+    if owner and token == "new":
         # Taking out owner_token for constructors as a little hack to make it work
         return Call(token=owner)
-    return Call(token=token,
-                owner_token=owner)
+    return Call(token=token, owner_token=owner)
 
 
 def walk(tree_el):
@@ -81,7 +89,7 @@ def make_calls(body_el):
     """
     calls = []
     for el in walk(body_el):
-        if el[0] == 'send':
+        if el[0] == "send":
             calls.append(get_call_from_send_el(el))
     return calls
 
@@ -96,9 +104,9 @@ def process_assign(assignment_el):
     :rtype: Variable
     """
 
-    assert assignment_el[0] == 'lvasgn'
+    assert assignment_el[0] == "lvasgn"
     varname = assignment_el[1]
-    if assignment_el[2][0] == 'send':
+    if assignment_el[2][0] == "send":
         call = get_call_from_send_el(assignment_el[2])
         return Variable(varname, call)
     # else is something like `varname = num`
@@ -120,12 +128,12 @@ def make_local_variables(tree_el, parent):
     """
     variables = []
     for el in tree_el:
-        if el[0] == 'lvasgn':
+        if el[0] == "lvasgn":
             variables.append(process_assign(el))
 
     # Make a 'self' variable for use anywhere we need it that points to the class
     if isinstance(parent, Group) and parent.group_type == GROUP_TYPE.CLASS:
-        variables.append(Variable('self', parent))
+        variables.append(Variable("self", parent))
 
     variables = list(filter(None, variables))
     return variables
@@ -143,7 +151,7 @@ def as_lines(tree_el):
         return []
     if isinstance(tree_el[0], list):
         return tree_el
-    if tree_el[0] == 'begin':
+    if tree_el[0] == "begin":
         return tree_el
     return [tree_el]
 
@@ -156,9 +164,9 @@ def get_tree_body(tree_el):
     :rtype: list[tree_el]
     """
 
-    if tree_el[0] == 'module':
+    if tree_el[0] == "module":
         body_struct = tree_el[2]
-    elif tree_el[0] == 'defs':
+    elif tree_el[0] == "defs":
         body_struct = tree_el[4]
     else:
         body_struct = tree_el[3]
@@ -176,16 +184,16 @@ def get_inherits(tree, body_tree):
     inherits = []
 
     # extends
-    if tree[0] == 'class' and tree[2]:
+    if tree[0] == "class" and tree[2]:
         inherits.append(tree[2][2])
 
     # module automatically extends same-named modules
-    if tree[0] == 'module':
+    if tree[0] == "module":
         inherits.append(tree[1][2])
 
     # mixins
     for el in body_tree:
-        if el[0] == 'send' and el[2] == 'include':
+        if el[0] == "send" and el[2] == "include":
             inherits.append(el[3][2])
 
     return inherits
@@ -195,10 +203,12 @@ class Ruby(BaseLanguage):
     @staticmethod
     def assert_dependencies():
         """Assert that ruby-parse is installed"""
-        assert is_installed('ruby-parse'), "The 'parser' gem is requred to " \
-                                           "parse ruby files but was not found " \
-                                           "on the path. Install it from gem " \
-                                           "and try again."
+        assert is_installed("ruby-parse"), (
+            "The 'parser' gem is requred to "
+            "parse ruby files but was not found "
+            "on the path. Install it from gem "
+            "and try again."
+        )
 
     @staticmethod
     def get_tree(filename, lang_params):
@@ -217,11 +227,12 @@ class Ruby(BaseLanguage):
         except json.decoder.JSONDecodeError:
             raise AssertionError(
                 "Ruby-parse could not parse file %r. You may have a syntax error. "
-                "For more detail, try running the command `ruby-parse %s`. " %
-                (filename, filename)) from None
+                "For more detail, try running the command `ruby-parse %s`. "
+                % (filename, filename)
+            ) from None
         assert isinstance(tree, list)
 
-        if tree[0] not in ('module', 'begin'):
+        if tree[0] not in ("module", "begin"):
             # one-line files
             tree = [tree]
         return tree
@@ -242,16 +253,16 @@ class Ruby(BaseLanguage):
         nodes = []
         body = []
         for el in as_lines(tree):
-            if el[0] in ('def', 'defs'):
+            if el[0] in ("def", "defs"):
                 nodes.append(el)
-            elif el[0] in ('class', 'module'):
+            elif el[0] in ("class", "module"):
                 groups.append(el)
             else:
                 body.append(el)
         return groups, nodes, body
 
     @staticmethod
-    def make_nodes(tree, parent):
+    def make_nodes(tree, parent, source_code=None):
         """
         Given a tree element of all the lines in a function, create the node along
         with the calls and variables internal to it.
@@ -261,20 +272,23 @@ class Ruby(BaseLanguage):
         :param parent Group:
         :rtype: list[Node]
         """
-        if tree[0] == 'defs':
+        if tree[0] == "defs":
             token = tree[2]  # def self.func
         else:
             token = tree[1]  # def func
 
-        is_constructor = token == 'initialize' and parent.group_type == GROUP_TYPE.CLASS
+        is_constructor = token == "initialize" and parent.group_type == GROUP_TYPE.CLASS
 
         tree_body = get_tree_body(tree)
-        subgroup_trees, subnode_trees, this_scope_body = Ruby.separate_namespaces(tree_body)
+        subgroup_trees, subnode_trees, this_scope_body = Ruby.separate_namespaces(
+            tree_body
+        )
         assert not subgroup_trees
         calls = make_calls(this_scope_body)
         variables = make_local_variables(this_scope_body, parent)
-        node = Node(token, calls, variables,
-                    parent=parent, is_constructor=is_constructor)
+        node = Node(
+            token, calls, variables, parent=parent, is_constructor=is_constructor
+        )
 
         # This is a little different from the other languages in that
         # the node is now on the parent
@@ -298,7 +312,7 @@ class Ruby(BaseLanguage):
         return root_node
 
     @staticmethod
-    def make_class_group(tree, parent):
+    def make_class_group(tree, parent, source_code=None):
         """
         Given an AST for the subgroup (a class), generate that subgroup.
         In this function, we will also need to generate all of the nodes internal
@@ -308,20 +322,21 @@ class Ruby(BaseLanguage):
         :param parent Group:
         :rtype: Group
         """
-        assert tree[0] in ('class', 'module')
+        assert tree[0] in ("class", "module")
         tree_body = get_tree_body(tree)
         subgroup_trees, node_trees, body_trees = Ruby.separate_namespaces(tree_body)
 
         group_type = GROUP_TYPE.CLASS
-        if tree[0] == 'module':
+        if tree[0] == "module":
             group_type = GROUP_TYPE.NAMESPACE
         display_type = tree[0].capitalize()
-        assert tree[1][0] == 'const'
+        assert tree[1][0] == "const"
         token = tree[1][2]
 
         inherits = get_inherits(tree, body_trees)
-        class_group = Group(token, group_type, display_type,
-                            inherits=inherits, parent=parent)
+        class_group = Group(
+            token, group_type, display_type, inherits=inherits, parent=parent
+        )
 
         for subgroup_tree in subgroup_trees:
             class_group.add_subgroup(Ruby.make_class_group(subgroup_tree, class_group))

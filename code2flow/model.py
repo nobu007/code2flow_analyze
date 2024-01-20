@@ -1,11 +1,18 @@
 import abc
 import os
 
-
-TRUNK_COLOR = '#966F33'
-LEAF_COLOR = '#6db33f'
-EDGE_COLORS = ["#000000", "#E69F00", "#56B4E9", "#009E73",
-               "#F0E442", "#0072B2", "#D55E00", "#CC79A7"]
+TRUNK_COLOR = "#966F33"
+LEAF_COLOR = "#6db33f"
+EDGE_COLORS = [
+    "#000000",
+    "#E69F00",
+    "#56B4E9",
+    "#009E73",
+    "#F0E442",
+    "#0072B2",
+    "#D55E00",
+    "#CC79A7",
+]
 NODE_COLOR = "#cccccc"
 
 
@@ -14,6 +21,7 @@ class Namespace(dict):
     Abstract constants class
     Constants can be accessed via .attribute or [key] and can be iterated over.
     """
+
     def __init__(self, *args, **kwargs):
         d = {k: k for k in args}
         d.update(dict(kwargs.items()))
@@ -48,8 +56,8 @@ def djoin(*tup):
     :rtype: str
     """
     if len(tup) == 1 and isinstance(tup[0], list):
-        return '.'.join(tup[0])
-    return '.'.join(tup)
+        return ".".join(tup[0])
+    return ".".join(tup)
 
 
 def flatten(list_of_lists):
@@ -118,7 +126,7 @@ class BaseLanguage(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def make_nodes(tree, parent):
+    def make_nodes(tree, parent, source_code=None):
         """
         :param tree Tree:
         :param parent Group:
@@ -136,7 +144,7 @@ class BaseLanguage(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def make_class_group(tree, parent):
+    def make_class_group(tree, parent, source_code=None):
         """
         :param tree Tree:
         :param parent Group:
@@ -144,12 +152,13 @@ class BaseLanguage(abc.ABC):
         """
 
 
-class Variable():
+class Variable:
     """
     Variables represent named tokens that are accessible to their scope.
     They may either point to a string or, once resolved, a Group/Node.
     Not all variables can be resolved
     """
+
     def __init__(self, token, points_to, line_number=None):
         """
         :param str token:
@@ -171,11 +180,11 @@ class Variable():
         :rtype: str
         """
         if self.points_to and isinstance(self.points_to, (Group, Node)):
-            return f'{self.token}->{self.points_to.token}'
-        return f'{self.token}->{self.points_to}'
+            return f"{self.token}->{self.points_to.token}"
+        return f"{self.token}->{self.points_to}"
 
 
-class Call():
+class Call:
     """
     Calls represent function call expressions.
     They can be an attribute call like
@@ -184,7 +193,10 @@ class Call():
         do_something()
 
     """
-    def __init__(self, token, line_number=None, owner_token=None, definite_constructor=False):
+
+    def __init__(
+        self, token, line_number=None, owner_token=None, definite_constructor=False
+    ):
         self.token = token
         self.owner_token = owner_token
         self.line_number = line_number
@@ -225,10 +237,10 @@ class Call():
 
         if self.is_attr():
             if self.owner_token == variable.token:
-                for node in getattr(variable.points_to, 'nodes', []):
+                for node in getattr(variable.points_to, "nodes", []):
                     if self.token == node.token:
                         return node
-                for inherit_nodes in getattr(variable.points_to, 'inherits', []):
+                for inherit_nodes in getattr(variable.points_to, "inherits", []):
                     for node in inherit_nodes:
                         if self.token == node.token:
                             return node
@@ -236,32 +248,46 @@ class Call():
                     return variable.points_to
 
             # This section is specifically for resolving namespace variables
-            if isinstance(variable.points_to, Group) \
-               and variable.points_to.group_type == GROUP_TYPE.NAMESPACE:
-                parts = self.owner_token.split('.')
+            if (
+                isinstance(variable.points_to, Group)
+                and variable.points_to.group_type == GROUP_TYPE.NAMESPACE
+            ):
+                parts = self.owner_token.split(".")
                 if len(parts) != 2:
                     return None
                 if parts[0] != variable.token:
                     return None
                 for node in variable.points_to.all_nodes():
-                    if parts[1] == node.namespace_ownership() \
-                       and self.token == node.token:
+                    if (
+                        parts[1] == node.namespace_ownership()
+                        and self.token == node.token
+                    ):
                         return node
 
             return None
         if self.token == variable.token:
             if isinstance(variable.points_to, Node):
                 return variable.points_to
-            if isinstance(variable.points_to, Group) \
-               and variable.points_to.group_type == GROUP_TYPE.CLASS \
-               and variable.points_to.get_constructor():
+            if (
+                isinstance(variable.points_to, Group)
+                and variable.points_to.group_type == GROUP_TYPE.CLASS
+                and variable.points_to.get_constructor()
+            ):
                 return variable.points_to.get_constructor()
         return None
 
 
-class Node():
-    def __init__(self, token, calls, variables, parent, import_tokens=None,
-                 line_number=None, is_constructor=False):
+class Node:
+    def __init__(
+        self,
+        token,
+        calls,
+        variables,
+        parent,
+        import_tokens=None,
+        line_number=None,
+        is_constructor=False,
+    ):
         self.token = token
         self.line_number = line_number
         self.calls = calls
@@ -269,6 +295,8 @@ class Node():
         self.import_tokens = import_tokens or []
         self.parent = parent
         self.is_constructor = is_constructor
+        self.segment_code = ""
+        self.segment_size = -1
 
         self.uid = "node_" + os.urandom(4).hex()
 
@@ -280,7 +308,7 @@ class Node():
         return f"<Node token={self.token} parent={self.parent}>"
 
     def __lt__(self, other):
-            return self.name() < other.name()
+        return self.name() < other.name()
 
     def name(self):
         """
@@ -314,9 +342,11 @@ class Node():
         Whether this node is attached to something besides the file
         :rtype: bool
         """
-        return (self.parent
-                and isinstance(self.parent, Group)
-                and self.parent.group_type in (GROUP_TYPE.CLASS, GROUP_TYPE.NAMESPACE))
+        return (
+            self.parent
+            and isinstance(self.parent, Group)
+            and self.parent.group_type in (GROUP_TYPE.CLASS, GROUP_TYPE.NAMESPACE)
+        )
 
     def token_with_ownership(self):
         """
@@ -407,21 +437,21 @@ class Node():
         :rtype: str
         """
         attributes = {
-            'label': self.label(),
-            'name': self.name(),
-            'shape': "rect",
-            'style': 'rounded,filled',
-            'fillcolor': NODE_COLOR,
+            "label": self.label(),
+            "name": self.name(),
+            "shape": "rect",
+            "style": "rounded,filled",
+            "fillcolor": NODE_COLOR,
         }
         if self.is_trunk:
-            attributes['fillcolor'] = TRUNK_COLOR
+            attributes["fillcolor"] = TRUNK_COLOR
         elif self.is_leaf:
-            attributes['fillcolor'] = LEAF_COLOR
+            attributes["fillcolor"] = LEAF_COLOR
 
-        ret = self.uid + ' ['
+        ret = self.uid + " ["
         for k, v in attributes.items():
             ret += f'{k}="{v}" '
-        ret += ']'
+        ret += "]"
         return ret
 
     def to_dict(self):
@@ -430,9 +460,9 @@ class Node():
         :rtype: dict
         """
         return {
-            'uid': self.uid,
-            'label': self.label(),
-            'name': self.name(),
+            "uid": self.uid,
+            "label": self.label(),
+            "name": self.name(),
         }
 
 
@@ -447,7 +477,7 @@ def _wrap_as_variables(sequence):
     return [Variable(el.token, el, el.line_number) for el in sequence]
 
 
-class Edge():
+class Edge:
     def __init__(self, node0, node1):
         self.node0 = node0
         self.node1 = node1
@@ -466,12 +496,12 @@ class Edge():
         return self.node0 < other.node0
 
     def to_dot(self):
-        '''
+        """
         Returns string format for embedding in a dotfile. Example output:
         node_uid_a -> node_uid_b [color='#aaa' penwidth='2']
         :rtype: str
-        '''
-        ret = self.node0.uid + ' -> ' + self.node1.uid
+        """
+        ret = self.node0.uid + " -> " + self.node1.uid
         source_color = int(self.node0.uid.split("_")[-1], 16) % len(EDGE_COLORS)
         ret += f' [color="{EDGE_COLORS[source_color]}" penwidth="2"]'
         return ret
@@ -481,18 +511,27 @@ class Edge():
         :rtype: dict
         """
         return {
-            'source': self.node0.uid,
-            'target': self.node1.uid,
-            'directed': True,
+            "source": self.node0.uid,
+            "target": self.node1.uid,
+            "directed": True,
         }
 
 
-class Group():
+class Group:
     """
     Groups represent namespaces (classes and modules/files)
     """
-    def __init__(self, token, group_type, display_type, import_tokens=None,
-                 line_number=None, parent=None, inherits=None):
+
+    def __init__(
+        self,
+        token,
+        group_type,
+        display_type,
+        import_tokens=None,
+        line_number=None,
+        parent=None,
+        inherits=None,
+    ):
         self.token = token
         self.line_number = line_number
         self.nodes = []
@@ -505,7 +544,12 @@ class Group():
         self.inherits = inherits or []
         assert group_type in GROUP_TYPE
 
-        self.uid = "cluster_" + os.urandom(4).hex()  # group doesn't work by syntax rules
+        self.uid = (
+            "cluster_" + os.urandom(4).hex()
+        )  # group doesn't work by syntax rules
+
+        self.segment_code = ""
+        self.segment_size = -1
 
     def __repr__(self):
         return f"<Group token={self.token} type={self.display_type}>"
@@ -589,9 +633,11 @@ class Group():
         """
 
         if self.root_node:
-            variables = (self.root_node.variables
-                         + _wrap_as_variables(self.subgroups)
-                         + _wrap_as_variables(n for n in self.nodes if n != self.root_node))
+            variables = (
+                self.root_node.variables
+                + _wrap_as_variables(self.subgroups)
+                + _wrap_as_variables(n for n in self.nodes if n != self.root_node)
+            )
             if any(v.line_number for v in variables):
                 return sorted(variables, key=lambda v: v.line_number, reverse=True)
             return variables
@@ -630,21 +676,26 @@ class Group():
         :rtype: str
         """
 
-        ret = 'subgraph ' + self.uid + ' {\n'
+        ret = "subgraph " + self.uid + " {\n"
         if self.nodes:
-            ret += '    '
-            ret += ' '.join(node.uid for node in self.nodes)
-            ret += ';\n'
+            ret += "    "
+            ret += " ".join(node.uid for node in self.nodes)
+            ret += ";\n"
         attributes = {
-            'label': self.label(),
-            'name': self.token,
-            'style': 'filled',
+            "label": self.label(),
+            "name": self.token,
+            "style": "filled",
         }
         for k, v in attributes.items():
             ret += f'    {k}="{v}";\n'
-        ret += '    graph[style=dotted];\n'
+        ret += "    graph[style=dotted];\n"
         for subgroup in self.subgroups:
-            ret += '    ' + ('\n'.join('    ' + ln for ln in
-                                       subgroup.to_dot().split('\n'))).strip() + '\n'
-        ret += '};\n'
+            ret += (
+                "    "
+                + (
+                    "\n".join("    " + ln for ln in subgroup.to_dot().split("\n"))
+                ).strip()
+                + "\n"
+            )
+        ret += "};\n"
         return ret

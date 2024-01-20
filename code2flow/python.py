@@ -2,8 +2,16 @@ import ast
 import logging
 import os
 
-from .model import (OWNER_CONST, GROUP_TYPE, Group, Node, Call, Variable,
-                    BaseLanguage, djoin)
+from .model import (
+    GROUP_TYPE,
+    OWNER_CONST,
+    BaseLanguage,
+    Call,
+    Group,
+    Node,
+    Variable,
+    djoin,
+)
 
 
 def get_call_from_func_element(func):
@@ -21,10 +29,10 @@ def get_call_from_func_element(func):
         val = func.value
         while True:
             try:
-                owner_token.append(getattr(val, 'attr', val.id))
+                owner_token.append(getattr(val, "attr", val.id))
             except AttributeError:
                 pass
-            val = getattr(val, 'value', None)
+            val = getattr(val, "value", None)
             if not val:
                 break
         if owner_token:
@@ -98,7 +106,7 @@ def process_import(element):
         token = single_import.asname or single_import.name
         rhs = single_import.name
 
-        if hasattr(element, 'module') and element.module:
+        if hasattr(element, "module") and element.module:
             rhs = djoin(element.module, rhs)
         ret.append(Variable(token, points_to=rhs, line_number=element.lineno))
     return ret
@@ -123,7 +131,7 @@ def make_local_variables(lines, parent):
             if type(element) in (ast.Import, ast.ImportFrom):
                 variables += process_import(element)
     if parent.group_type == GROUP_TYPE.CLASS:
-        variables.append(Variable('self', parent, lines[0].lineno))
+        variables.append(Variable("self", parent, lines[0].lineno))
 
     variables = list(filter(None, variables))
     return variables
@@ -157,7 +165,7 @@ class Python(BaseLanguage):
             with open(filename) as f:
                 raw = f.read()
         except ValueError:
-            with open(filename, encoding='UTF-8') as f:
+            with open(filename, encoding="UTF-8") as f:
                 raw = f.read()
         return ast.parse(raw)
 
@@ -181,7 +189,7 @@ class Python(BaseLanguage):
                 nodes.append(el)
             elif type(el) == ast.ClassDef:
                 groups.append(el)
-            elif getattr(el, 'body', None):
+            elif getattr(el, "body", None):
                 tup = Python.separate_namespaces(el)
                 groups += tup[0]
                 nodes += tup[1]
@@ -191,7 +199,7 @@ class Python(BaseLanguage):
         return groups, nodes, body
 
     @staticmethod
-    def make_nodes(tree, parent):
+    def make_nodes(tree, parent, source_code=None):
         """
         Given an ast of all the lines in a function, create the node along with the
         calls and variables internal to it.
@@ -205,15 +213,26 @@ class Python(BaseLanguage):
         calls = make_calls(tree.body)
         variables = make_local_variables(tree.body, parent)
         is_constructor = False
-        if parent.group_type == GROUP_TYPE.CLASS and token in ['__init__', '__new__']:
+        if parent.group_type == GROUP_TYPE.CLASS and token in ["__init__", "__new__"]:
             is_constructor = True
 
         import_tokens = []
         if parent.group_type == GROUP_TYPE.FILE:
             import_tokens = [djoin(parent.token, token)]
 
-        return [Node(token, calls, variables, parent, import_tokens=import_tokens,
-                     line_number=line_number, is_constructor=is_constructor)]
+        node = Node(
+            token,
+            calls,
+            variables,
+            parent,
+            import_tokens=import_tokens,
+            line_number=line_number,
+            is_constructor=is_constructor,
+        )
+        if source_code:
+            node.segment_code = Python.get_segment_code(source_code, tree)
+            node.segment_size = len(source_code)
+        return [node]
 
     @staticmethod
     def make_root_node(lines, parent):
@@ -232,7 +251,7 @@ class Python(BaseLanguage):
         return Node(token, calls, variables, line_number=line_number, parent=parent)
 
     @staticmethod
-    def make_class_group(tree, parent):
+    def make_class_group(tree, parent, source_code=None):
         """
         Given an AST for the subgroup (a class), generate that subgroup.
         In this function, we will also need to generate all of the nodes internal
@@ -247,21 +266,41 @@ class Python(BaseLanguage):
 
         group_type = GROUP_TYPE.CLASS
         token = tree.name
-        display_name = 'Class'
+        display_name = "Class"
         line_number = tree.lineno
 
         import_tokens = [djoin(parent.token, token)]
         inherits = get_inherits(tree)
 
-        class_group = Group(token, group_type, display_name, import_tokens=import_tokens,
-                            inherits=inherits, line_number=line_number, parent=parent)
+        class_group = Group(
+            token,
+            group_type,
+            display_name,
+            import_tokens=import_tokens,
+            inherits=inherits,
+            line_number=line_number,
+            parent=parent,
+        )
 
+        segment_code = []
         for node_tree in node_trees:
-            class_group.add_node(Python.make_nodes(node_tree, parent=class_group)[0])
+            class_group.add_node(
+                Python.make_nodes(
+                    node_tree, parent=class_group, source_code=source_code
+                )[0]
+            )
 
         for subgroup_tree in subgroup_trees:
-            logging.warning("Code2flow does not support nested classes. Skipping %r in %r.",
-                            subgroup_tree.name, parent.token)
+            logging.warning(
+                "Code2flow does not support nested classes. Skipping %r in %r.",
+                subgroup_tree.name,
+                parent.token,
+            )
+
+        if source_code:
+            segment_code = Python.get_segment_code(source_code, tree)
+            class_group.segment_code = segment_code
+            class_group.segment_size = len(segment_code)
         return class_group
 
     @staticmethod
@@ -272,4 +311,35 @@ class Python(BaseLanguage):
         :param filename str:
         :rtype: list[str]
         """
-        return [os.path.split(filename)[-1].rsplit('.py', 1)[0]]
+        return [os.path.split(filename)[-1].rsplit(".py", 1)[0]]
+
+    @staticmethod
+    def get_source_code_from_file(source_file: str):
+        """get_source_code_from_file"""
+        with open(source_file, encoding="utf-8") as file:
+            source_code = file.read()
+        return source_code
+
+    @staticmethod
+    def get_segment_code_from_file(source_file: str, segment_node: ast.AST):
+        """get_segment_code_from_file"""
+        source_code = Python.get_source_code_from_file(source_file)
+        segment_code = Python.get_segment_code(source_code, segment_node)
+        return segment_code
+
+    @staticmethod
+    def get_segment_code(source_code: str, segment_node: ast.AST):
+        """get_segment_code"""
+        segment_code = ast.get_source_segment(source_code, segment_node)
+        return segment_code
+
+    @staticmethod
+    def get_class_groups(group: Group, out_class_groups: list):
+        """get_class_groups"""
+        for g in group.subgroups:
+            if g.group_type == GROUP_TYPE.CLASS:
+                out_class_groups.append(g)
+                # ignore inner class.
+            elif g.group_type == GROUP_TYPE.FILE:
+                Python.get_class_groups(g, out_class_groups)
+        return out_class_groups

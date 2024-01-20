@@ -1,10 +1,20 @@
+import json
 import logging
 import os
-import json
 import subprocess
 
-from .model import (Group, Node, Call, Variable, BaseLanguage,
-                    OWNER_CONST, GROUP_TYPE, is_installed, djoin, flatten)
+from .model import (
+    GROUP_TYPE,
+    OWNER_CONST,
+    BaseLanguage,
+    Call,
+    Group,
+    Node,
+    Variable,
+    djoin,
+    flatten,
+    is_installed,
+)
 
 
 def lineno(el):
@@ -16,7 +26,7 @@ def lineno(el):
     """
     if isinstance(el, list):
         el = el[0]
-    ret = el['loc']['start']['line']
+    ret = el["loc"]["start"]["line"]
     assert type(ret) == int
     return ret
 
@@ -30,12 +40,12 @@ def walk(tree):
     ret = []
     if type(tree) == list:
         for el in tree:
-            if el.get('type'):
+            if el.get("type"):
                 ret.append(el)
                 ret += walk(el)
     elif type(tree) == dict:
         for k, v in tree.items():
-            if type(v) == dict and v.get('type'):
+            if type(v) == dict and v.get("type"):
                 ret.append(v)
                 ret += walk(v)
             if type(v) == list:
@@ -53,23 +63,27 @@ def resolve_owner(callee):
     :rtype: str
     """
 
-    if callee['object']['type'] == 'ThisExpression':
-        return 'this'
-    if callee['object']['type'] == 'Identifier':
-        return callee['object']['name']
-    if callee['object']['type'] == 'MemberExpression':
-        if 'object' in callee['object'] and 'name' in callee['object']['property']:
-            return djoin((resolve_owner(callee['object']) or ''),
-                         callee['object']['property']['name'])
+    if callee["object"]["type"] == "ThisExpression":
+        return "this"
+    if callee["object"]["type"] == "Identifier":
+        return callee["object"]["name"]
+    if callee["object"]["type"] == "MemberExpression":
+        if "object" in callee["object"] and "name" in callee["object"]["property"]:
+            return djoin(
+                (resolve_owner(callee["object"]) or ""),
+                callee["object"]["property"]["name"],
+            )
         return OWNER_CONST.UNKNOWN_VAR
-    if callee['object']['type'] == 'CallExpression':
+    if callee["object"]["type"] == "CallExpression":
         return OWNER_CONST.UNKNOWN_VAR
 
-    if callee['object']['type'] == 'NewExpression':
-        if 'name' in callee['object']['callee']:
-            return callee['object']['callee']['name']
-        return djoin(callee['object']['callee']['object']['name'],
-                     callee['object']['callee']['property']['name'])
+    if callee["object"]["type"] == "NewExpression":
+        if "name" in callee["object"]["callee"]:
+            return callee["object"]["callee"]["name"]
+        return djoin(
+            callee["object"]["callee"]["object"]["name"],
+            callee["object"]["callee"]["property"]["name"],
+        )
 
     return OWNER_CONST.UNKNOWN_VAR
 
@@ -83,14 +97,16 @@ def get_call_from_func_element(func):
     :param func dict:
     :rtype: Call|None
     """
-    callee = func['callee']
-    if callee['type'] == 'MemberExpression' and 'name' in callee['property']:
+    callee = func["callee"]
+    if callee["type"] == "MemberExpression" and "name" in callee["property"]:
         owner_token = resolve_owner(callee)
-        return Call(token=callee['property']['name'],
-                    line_number=lineno(callee),
-                    owner_token=owner_token)
-    if callee['type'] == 'Identifier':
-        return Call(token=callee['name'], line_number=lineno(callee))
+        return Call(
+            token=callee["property"]["name"],
+            line_number=lineno(callee),
+            owner_token=owner_token,
+        )
+    if callee["type"] == "Identifier":
+        return Call(token=callee["name"], line_number=lineno(callee))
     return None
 
 
@@ -103,13 +119,17 @@ def make_calls(body):
     """
     calls = []
     for element in walk(body):
-        if element['type'] == 'CallExpression':
+        if element["type"] == "CallExpression":
             call = get_call_from_func_element(element)
             if call:
                 calls.append(call)
-        elif element['type'] == 'NewExpression' and element['callee']['type'] == 'Identifier':
-            calls.append(Call(token=element['callee']['name'],
-                              line_number=lineno(element)))
+        elif (
+            element["type"] == "NewExpression"
+            and element["callee"]["type"] == "Identifier"
+        ):
+            calls.append(
+                Call(token=element["callee"]["name"], line_number=lineno(element))
+            )
     return calls
 
 
@@ -123,50 +143,52 @@ def process_assign(element):
     :rtype: Variable
     """
 
-    if len(element['declarations']) > 1:
+    if len(element["declarations"]) > 1:
         return []
-    target = element['declarations'][0]
-    assert target['type'] == 'VariableDeclarator'
-    if target['init'] is None:
+    target = element["declarations"][0]
+    assert target["type"] == "VariableDeclarator"
+    if target["init"] is None:
         return []
 
-    if target['init']['type'] == 'NewExpression':
-        token = target['id']['name']
-        call = get_call_from_func_element(target['init'])
+    if target["init"]["type"] == "NewExpression":
+        token = target["id"]["name"]
+        call = get_call_from_func_element(target["init"])
         if call:
             return [Variable(token, call, lineno(element))]
 
     # this block is for require (as in: import) expressions
-    if target['init']['type'] == 'CallExpression' \
-       and target['init']['callee'].get('name') == 'require':
-        import_src_str = target['init']['arguments'][0]['value']
-        if 'name' in target['id']:
-            imported_name = target['id']['name']
+    if (
+        target["init"]["type"] == "CallExpression"
+        and target["init"]["callee"].get("name") == "require"
+    ):
+        import_src_str = target["init"]["arguments"][0]["value"]
+        if "name" in target["id"]:
+            imported_name = target["id"]["name"]
             points_to_str = djoin(import_src_str, imported_name)
             return [Variable(imported_name, points_to_str, lineno(element))]
         ret = []
-        for prop in target['id'].get('properties', []):
-            imported_name = prop['key']['name']
+        for prop in target["id"].get("properties", []):
+            imported_name = prop["key"]["name"]
             points_to_str = djoin(import_src_str, imported_name)
             ret.append(Variable(imported_name, points_to_str, lineno(element)))
         return ret
 
     # For the other type of import expressions
-    if target['init']['type'] == 'ImportExpression':
-        import_src_str = target['init']['source']['raw']
-        imported_name = target['id']['name']
+    if target["init"]["type"] == "ImportExpression":
+        import_src_str = target["init"]["source"]["raw"]
+        imported_name = target["id"]["name"]
         points_to_str = djoin(import_src_str, imported_name)
         return [Variable(imported_name, points_to_str, lineno(element))]
 
-    if target['init']['type'] == 'CallExpression':
-        if 'name' not in target['id']:
+    if target["init"]["type"] == "CallExpression":
+        if "name" not in target["id"]:
             return []
-        call = get_call_from_func_element(target['init'])
+        call = get_call_from_func_element(target["init"])
         if call:
-            return [Variable(target['id']['name'], call, lineno(element))]
+            return [Variable(target["id"]["name"], call, lineno(element))]
 
-    if target['init']['type'] == 'ThisExpression':
-        assert set(target['init'].keys()) == {'start', 'end', 'loc', 'type'}
+    if target["init"]["type"] == "ThisExpression":
+        assert set(target["init"].keys()) == {"start", "end", "loc", "type"}
         return []
     return []
 
@@ -189,12 +211,12 @@ def make_local_variables(tree, parent):
 
     variables = []
     for element in walk(tree):
-        if element['type'] == 'VariableDeclaration':
+        if element["type"] == "VariableDeclaration":
             variables += process_assign(element)
 
     # Make a 'this' variable for use anywhere we need it that points to the class
     if isinstance(parent, Group) and parent.group_type == GROUP_TYPE.CLASS:
-        variables.append(Variable('this', parent, lineno(tree)))
+        variables.append(Variable("this", parent, lineno(tree)))
 
     variables = list(filter(None, variables))
     return variables
@@ -209,7 +231,7 @@ def children(tree):
     assert type(tree) == dict
     ret = []
     for k, v in tree.items():
-        if type(v) == dict and v.get('type'):
+        if type(v) == dict and v.get("type"):
             ret.append(v)
         if type(v) == list:
             ret += filter(None, v)
@@ -222,10 +244,15 @@ def get_inherits(tree):
     :param ast tree:
     :rtype: list[str]
     """
-    if tree['superClass']:
-        if 'name' in tree['superClass']:
-            return [tree['superClass']['name']]
-        return [djoin(tree['superClass']['object']['name'], tree['superClass']['property']['name'])]
+    if tree["superClass"]:
+        if "name" in tree["superClass"]:
+            return [tree["superClass"]["name"]]
+        return [
+            djoin(
+                tree["superClass"]["object"]["name"],
+                tree["superClass"]["property"]["name"],
+            )
+        ]
     return []
 
 
@@ -234,12 +261,17 @@ def get_acorn_version():
     Get the version of installed acorn
     :rtype: str
     """
-    proc = subprocess.Popen(['node', '-p', 'require(\'acorn/package.json\').version'],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            cwd=os.path.dirname(os.path.realpath(__file__)))
-    assert proc.wait() == 0, "Acorn is required to parse javascript files. " \
-                             "It was found on the path but could not be imported " \
-                             "in node.\n" + proc.stderr.read().decode()
+    proc = subprocess.Popen(
+        ["node", "-p", "require('acorn/package.json').version"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=os.path.dirname(os.path.realpath(__file__)),
+    )
+    assert proc.wait() == 0, (
+        "Acorn is required to parse javascript files. "
+        "It was found on the path but could not be imported "
+        "in node.\n" + proc.stderr.read().decode()
+    )
     return proc.stdout.read().decode().strip()
 
 
@@ -247,14 +279,19 @@ class Javascript(BaseLanguage):
     @staticmethod
     def assert_dependencies():
         """Assert that acorn is installed and the correct version"""
-        assert is_installed('acorn'), "Acorn is required to parse javascript files " \
-                                      "but was not found on the path. Install it " \
-                                      "from npm and try again."
+        assert is_installed("acorn"), (
+            "Acorn is required to parse javascript files "
+            "but was not found on the path. Install it "
+            "from npm and try again."
+        )
         version = get_acorn_version()
-        if not version.startswith('8.'):
-            logging.warning("Acorn is required to parse javascript files. "
-                            "Version %r was found but code2flow has only been "
-                            "tested on 8.*", version)
+        if not version.startswith("8."):
+            logging.warning(
+                "Acorn is required to parse javascript files. "
+                "Version %r was found but code2flow has only been "
+                "tested on 8.*",
+                version,
+            )
         logging.info("Using Acorn %s" % version)
 
     @staticmethod
@@ -266,8 +303,9 @@ class Javascript(BaseLanguage):
         :param lang_params LanguageParams:
         :rtype: ast
         """
-        script_loc = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                  "get_ast.js")
+        script_loc = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "get_ast.js"
+        )
         cmd = ["node", script_loc, lang_params.source_type, filename]
         try:
             output = subprocess.check_output(cmd, stderr=subprocess.PIPE)
@@ -278,11 +316,12 @@ class Javascript(BaseLanguage):
                 "with --source-type=module. "
                 "For more detail, try running the command "
                 "\n  acorn %s\n"
-                "Warning: Acorn CANNOT parse all javascript files. See their docs. " %
-                (filename, filename)) from None
+                "Warning: Acorn CANNOT parse all javascript files. See their docs. "
+                % (filename, filename)
+            ) from None
         tree = json.loads(output)
         assert isinstance(tree, dict)
-        assert tree['type'] == 'Program'
+        assert tree["type"] == "Program"
         return tree
 
     @staticmethod
@@ -302,9 +341,9 @@ class Javascript(BaseLanguage):
         nodes = []
         body = []
         for el in children(tree):
-            if el['type'] in ('MethodDefinition', 'FunctionDeclaration'):
+            if el["type"] in ("MethodDefinition", "FunctionDeclaration"):
                 nodes.append(el)
-            elif el['type'] == 'ClassDeclaration':
+            elif el["type"] == "ClassDeclaration":
                 groups.append(el)
             else:
                 tup = Javascript.separate_namespaces(el)
@@ -317,7 +356,7 @@ class Javascript(BaseLanguage):
         return groups, nodes, body
 
     @staticmethod
-    def make_nodes(tree, parent):
+    def make_nodes(tree, parent, source_code=None):
         """
         Given an ast of all the lines in a function, create the node along with the
         calls and variables internal to it.
@@ -328,20 +367,22 @@ class Javascript(BaseLanguage):
         :rtype: list[Node]
         """
         is_constructor = False
-        if tree.get('kind') == 'constructor':
-            token = '(constructor)'
+        if tree.get("kind") == "constructor":
+            token = "(constructor)"
             is_constructor = True
-        elif tree['type'] == 'FunctionDeclaration':
-            token = tree['id']['name']
-        elif tree['type'] == 'MethodDefinition':
-            token = tree['key']['name']
+        elif tree["type"] == "FunctionDeclaration":
+            token = tree["id"]["name"]
+        elif tree["type"] == "MethodDefinition":
+            token = tree["key"]["name"]
 
-        if tree['type'] == 'FunctionDeclaration':
-            full_node_body = tree['body']
+        if tree["type"] == "FunctionDeclaration":
+            full_node_body = tree["body"]
         else:
-            full_node_body = tree['value']
+            full_node_body = tree["value"]
 
-        subgroup_trees, subnode_trees, this_scope_body = Javascript.separate_namespaces(full_node_body)
+        subgroup_trees, subnode_trees, this_scope_body = Javascript.separate_namespaces(
+            full_node_body
+        )
         if subgroup_trees:
             # TODO - this is when a class is defined within a function
             # It's unusual but should probably be handled in the future.
@@ -352,8 +393,14 @@ class Javascript(BaseLanguage):
         line_number = lineno(tree)
         calls = make_calls(this_scope_body)
         variables = make_local_variables(this_scope_body, parent)
-        node = Node(token, calls, variables, parent=parent, line_number=line_number,
-                    is_constructor=is_constructor)
+        node = Node(
+            token,
+            calls,
+            variables,
+            parent=parent,
+            line_number=line_number,
+            is_constructor=is_constructor,
+        )
         subnodes = flatten([Javascript.make_nodes(t, node) for t in subnode_trees])
 
         return [node] + subnodes
@@ -371,12 +418,11 @@ class Javascript(BaseLanguage):
         token = "(global)"
         calls = make_calls(lines)
         variables = make_local_variables(lines, parent)
-        root_node = Node(token, calls, variables,
-                         line_number=0, parent=parent)
+        root_node = Node(token, calls, variables, line_number=0, parent=parent)
         return root_node
 
     @staticmethod
-    def make_class_group(tree, parent):
+    def make_class_group(tree, parent, source_code=None):
         """
         Given an AST for the subgroup (a class), generate that subgroup.
         In this function, we will also need to generate all of the nodes internal
@@ -386,17 +432,23 @@ class Javascript(BaseLanguage):
         :param parent Group:
         :rtype: Group
         """
-        assert tree['type'] == 'ClassDeclaration'
+        assert tree["type"] == "ClassDeclaration"
         subgroup_trees, node_trees, body_trees = Javascript.separate_namespaces(tree)
         assert not subgroup_trees
 
         group_type = GROUP_TYPE.CLASS
-        token = tree['id']['name']
-        display_name = 'Class'
+        token = tree["id"]["name"]
+        display_name = "Class"
         line_number = lineno(tree)
         inherits = get_inherits(tree)
-        class_group = Group(token, group_type, display_name,
-                            inherits=inherits, line_number=line_number, parent=parent)
+        class_group = Group(
+            token,
+            group_type,
+            display_name,
+            inherits=inherits,
+            line_number=line_number,
+            parent=parent,
+        )
 
         for node_tree in node_trees:
             for new_node in Javascript.make_nodes(node_tree, parent=class_group):
